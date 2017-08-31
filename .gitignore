@@ -1,0 +1,7 @@
+*.sh
+*/utils/datasets
+*/__pycache__
+*/utils/__pycache__
+*.pdf
+slides
+readings
