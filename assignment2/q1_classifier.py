@@ -8,7 +8,6 @@ from q1_softmax import cross_entropy_loss
 from model import Model
 from utils.general_utils import get_minibatches
 
-
 class Config(object):
     """Holds model hyperparams and data information.
 
