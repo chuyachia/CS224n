@@ -182,6 +182,12 @@ def cbow(currentWord, C, contextWords, tokens, inputVectors, outputVectors,
     gradOut = np.zeros(outputVectors.shape)
 
     ### YOUR CODE HERE
+    vhat_indx = np.array([tokens[c] for c in contextWords])
+    #vhat = np.mean(inputVectors[vhat_indx],axis = 0)
+    vhat = np.sum(inputVectors[vhat_indx],axis = 0)
+    cost, gradIn_temp, gradOut= word2vecCostAndGradient(vhat,tokens[currentWord],outputVectors, dataset)
+    for i in vhat_indx:
+        gradIn[i]+=gradIn_temp
     #raise NotImplementedError
     ### END YOUR CODE
 
