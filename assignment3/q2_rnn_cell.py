@@ -4,8 +4,8 @@
 Q2(c): Recurrent neural nets for NER
 """
 
-from __future__ import absolute_import
-from __future__ import division
+#from __future__ import absolute_import
+#from __future__ import division
 
 import argparse
 import logging
@@ -64,10 +64,10 @@ class RNNCell(tf.nn.rnn_cell.RNNCell):
             ### YOUR CODE HERE (~6-10 lines)
             W_x = tf.get_variable(name='W_x',shape=[self.input_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer())
             W_h = tf.get_variable(name='W_h',shape=[self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer())
-            b = tf.get_variable(name='b', initializer= tf.zeros(shape=[1,self._state_size]))
+            b = tf.get_variable(name='b', shape=[1,self._state_size],initializer=tf.constant_initializer(0.0))
             new_state = tf.sigmoid(tf.matmul(inputs,W_x)+tf.matmul(state,W_h)+b)
             
-            pass
+
             ### END YOUR CODE ###
         # For an RNN , the output and state are the same (N.B. this
         # isn't true for an LSTM, though we aren't using one of those in
