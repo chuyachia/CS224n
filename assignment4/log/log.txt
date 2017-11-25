@@ -1,0 +1,44 @@
+Number of params: 19555851 (retreival took 25.906288 secs)
+Number of params: 19555851 (retreival took 24.515247 secs)
+Number of params: 19555851 (retreival took 29.057855 secs)
+Number of params: 19556602 (retreival took 32.366466 secs)
+Number of params: 19556602 (retreival took 33.215491 secs)
+Number of params: 19556602 (retreival took 31.267788 secs)
+Number of params: 19556602 (retreival took 34.628664 secs)
+Number of params: 19556602 (retreival took 33.713928 secs)
+Number of params: 19556602 (retreival took 18.806433 secs)
+Number of params: 19556602 (retreival took 23.541441 secs)
+Number of params: 19556602 (retreival took 39.353472 secs)
+Number of params: 19556602 (retreival took 35.631463 secs)
+Number of params: 19556602 (retreival took 41.497073 secs)
+Number of params: 19556602 (retreival took 35.845264 secs)
+Number of params: 19556602 (retreival took 36.894065 secs)
+Number of params: 19556602 (retreival took 39.203671 secs)
+Number of params: 19556602 (retreival took 43.659527 secs)
+Number of params: 19556602 (retreival took 26.801457 secs)
+Number of params: 19556602 (retreival took 24.782029 secs)
+Number of params: 19556602 (retreival took 24.679164 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 26.807533 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 29.199187 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 17.470083 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 19.094434 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 26.741529 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 17.908831 secs)
+Reading model parameters from /Users/Client/AppData/Local/Temp/cs224n-squad-train/qa-0
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 16.926030 secs)
+Reading model parameters from /Users/Client/AppData/Local/Temp/cs224n-squad-train/qa-1
+Number of params: 19556602 (retreival took 17.211917 secs)

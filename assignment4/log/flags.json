@@ -1,0 +1,1 @@
+{"batch_size": 10, "learning_rate": 0.01, "state_size": 200, "embedding_size": 100, "embed_path": "", "max_gradient_norm": 10.0, "log_dir": "log", "data_dir": "data/squad", "epochs": 10, "output_size": 750, "load_train_dir": "", "vocab_path": "data/squad/vocab.dat", "dropout": 0.15, "keep": 0, "print_every": 1, "optimizer": "adam", "train_dir": "train"}
