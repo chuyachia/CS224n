@@ -98,18 +98,14 @@ def pad_sentences(data_path,max_len):
     else:
         raise ValueError("Data file %s not found.", data_path)
 
-def one_hot_encode_answer_span(data_path,context_max_len):
+def get_answer_span(data_path,context_max_len):
     if tf.gfile.Exists(data_path):
-        data_one_hot= []
         data_id=[]
         with tf.gfile.GFile(data_path,mode="rb") as f:
             for line in f:
                 start,end = [int(s) for s in line.strip().split(' ')]
                 data_id.append([start,end])
-                start_one_hat = [0.0 if i!= start else 1.0 for i in range(context_max_len)]
-                end_one_hat = [0.0 if i!= end else 1.0 for i in range(context_max_len)]
-                data_one_hot.append([start_one_hat,end_one_hat])
-        return np.array(data_one_hot), np.array(data_id)                
+        return np.array(data_id)
     else:
         raise ValueError("Data file %s not found.", data_path)
     
@@ -126,16 +122,16 @@ def main(_):
     train_c_path = pjoin(FLAGS.data_dir, "train.ids.context")
     train_c_data, train_c_seq_len,train_c_mask = pad_sentences(train_c_path,context_max_len)
     train_s_path = pjoin(FLAGS.data_dir, "train.span")
-    train_label,train_s_e_id = one_hot_encode_answer_span(train_s_path,context_max_len)
-    dataset['train'] =[train_q_data,train_q_seq_len,train_c_data,train_c_seq_len,train_c_mask,train_label,train_s_e_id]
+    train_s_e_id = get_answer_span(train_s_path,context_max_len)
+    dataset['train'] =[train_q_data,train_q_seq_len,train_c_data,train_c_seq_len,train_c_mask,train_s_e_id]
     # Preprocess and collect validation data
     val_q_path = pjoin(FLAGS.data_dir, "val.ids.question")
     val_q_data, val_q_seq_len,_ = pad_sentences(val_q_path,question_max_len)
     val_c_path = pjoin(FLAGS.data_dir, "val.ids.context")
     val_c_data, val_c_seq_len,val_c_mask = pad_sentences(val_c_path,context_max_len)
     val_s_path = pjoin(FLAGS.data_dir, "val.span")
-    val_label,val_s_e_id = one_hot_encode_answer_span(val_s_path,context_max_len)
-    dataset['val'] = [val_q_data,val_q_seq_len,val_c_data,val_c_seq_len,val_c_mask,val_label,val_s_e_id]
+    val_s_e_id = get_answer_span(val_s_path,context_max_len)
+    dataset['val'] = [val_q_data,val_q_seq_len,val_c_data,val_c_seq_len,val_c_mask,val_s_e_id]
     
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
@@ -160,7 +156,7 @@ def main(_):
         initialize_model(sess, qa, load_train_dir)
 
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
-        print(save_train_dir)
+
         for i in range(FLAGS.epochs):
             qa.train(sess, dataset['train'], save_train_dir)#
             print('Finish training epoch {}'.format(i))

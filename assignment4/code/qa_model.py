@@ -25,7 +25,6 @@ def get_optimizer(opt):
     return optfn
 
 def compute_alignment(input_hidden_state, attention_hidden_states):# attention_hidden_states: max_time* batch_size*_state_size, input_hidden_state:batch_size*_state_size
-    print(attention_hidden_states.get_shape().as_list())
     _max_time,_,_state_size = attention_hidden_states.get_shape().as_list()
     attention_hidden_states = tf.reshape(attention_hidden_states,[_max_time,-1])
     input_hidden_state= tf.reshape(input_hidden_state,[-1])
@@ -88,7 +87,6 @@ class LSTMCell(tf.nn.rnn_cell.RNNCell):
                 V_f = tf.get_variable(name="V_f", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
                 V_o = tf.get_variable(name="V_o", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
                 V_c = tf.get_variable(name="V_c", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-                print(self.condition_state)
                 alignment = compute_alignment(hidden_state,self.condition_state)
                 attention = tf.reduce_sum(tf.multiply(alignment,self.condition_state),0) # [batch_size,_state_size]
                 i_t =  tf.sigmoid(tf.matmul(inputs,W_i)+tf.matmul(hidden_state,U_i)+tf.matmul(attention,V_i)+b_i)
@@ -155,7 +153,6 @@ class Decoder(object):
         """
         #Run a final LSTM that does a 2-class classification of these vectors as O or ANSWER
         _max_time,_batch_size,_input_size = knowledge_rep.get_shape().as_list()
-        #_max_time,_batch_size,_input_size = [s[i].value for i in range(0, len(s))]
         cell = LSTMCell(_input_size,self.output_size)
         outputs, state = tf.nn.dynamic_rnn(cell,knowledge_rep,dtype=tf.float32,time_major=True,scope='knowledge') #outputs: context_max_time* batch_size*output_size
         W_d = tf.get_variable(name="W_d", shape = [self.output_size,2],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
@@ -187,7 +184,7 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
 
         self.q_placeholder = tf.placeholder(tf.int32, shape=(self.question_max_len,None))#self.question_max_len
         self.c_placeholder = tf.placeholder(tf.int32, shape=(self.context_max_len,None))#self.context_max_len
-        self.label_placeholder = tf.placeholder(tf.float32, shape=(self.context_max_len,None,2)) #
+        self.span_id_placeholder = tf.placeholder(tf.int32, shape=(None,2)) #batch*2
         self.q_seq_len_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.c_seq_len_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.c_mask_placeholder = tf.placeholder(tf.bool, shape=(self.context_max_len,None))#self.context_max_len
@@ -230,7 +227,7 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         ## Add dropout to output
         c_outputs = tf.nn.dropout(c_outputs,keep_prob=self.dropout_placeholder)
         # Attention over context reppresentation
-        context_align = compute_alignment(tf.concat(1,[q_rep,q_rep]), c_outputs) ### problem here [10(batch_size)*400(state_size*2)] [600(context_max_len)*10(batch_size)*800(state_size*2*2)] dimension does not match
+        context_align = compute_alignment(tf.concat(1,[q_rep,q_rep]), c_outputs)
         context_attention = tf.reduce_sum(tf.multiply(context_align,c_outputs),0) #[batch_size,state_size*2*2]
         knowledge = tf.multiply(context_attention,c_outputs)
         # Decode context
@@ -245,8 +242,7 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         :return:
         """
         with vs.variable_scope("loss"):
-            loss_temp = tf.nn.sigmoid_cross_entropy_with_logits(logits= self.logits,targets=self.label_placeholder)
-            loss_temp = tf.boolean_mask(loss_temp,self.c_mask_placeholder)
+            loss_temp = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=tf.transpose(self.logits), labels=tf.transpose(self.span_id_placeholder))
             loss = tf.reduce_mean(loss_temp)
         return loss
 
@@ -272,8 +268,8 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
             self.c_placeholder:np.transpose(train[2]),
             self.c_seq_len_placeholder:train[3],
             self.c_mask_placeholder:np.transpose(train[4]),
-            self.label_placeholder:np.transpose(train[5],(2,0,1)),
-			self.dropout_placeholder:self.dropout_rate
+            self.span_id_placeholder:(train[5]),
+            self.dropout_placeholder:self.dropout_rate
         }
 
 
@@ -295,13 +291,13 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
             self.c_placeholder:np.transpose(valid[2]),
             self.c_seq_len_placeholder:valid[3],
             self.c_mask_placeholder:np.transpose(valid[4]),
-            self.label_placeholder:np.transpose(valid[5],(2,0,1)),
-			self.dropout_placeholder:1.0
+            self.span_id_placeholder:(valid[5]),
+            self.dropout_placeholder:1.0
         }
 
 
 
-        output_feed = [self.loss]
+        output_feed = self.loss
 
         outputs = session.run(output_feed, input_feed)
 
@@ -319,23 +315,19 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
             self.c_placeholder:np.transpose(test[2]),
             self.c_seq_len_placeholder:test[3],
             self.c_mask_placeholder:np.transpose(test[4]),
-			self.dropout_placeholder:1.0
+            self.dropout_placeholder:1.0
         }
 
-        output_feed = [self.logits]
+        output_feed = self.logits
 
         outputs = session.run(output_feed, input_feed)
 
         return outputs
 
     def answer(self, session, test_x):
-        logits = self.decode(session, test_x)
-        yp, yp2 = np.split(np.array(logits[0]),2,2)
-        a_s = np.argmax(yp, axis=0)
-        a_e = np.argmax(yp2, axis=0)
-        a_s= np.reshape(a_s,(-1))
-        a_e= np.reshape(a_e,(-1))
-        return (a_s, a_e)
+        logits = self.decode(session, test_x) #max_len*batch*2
+        span_id = np.argmax(logits,0)# batch*2
+        return span_id
 
     def validate(self, sess, valid_dataset):
         """
@@ -372,18 +364,14 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         :param log: whether we print to std out stream
         :return:
         """
-        ### NEED to be rewritten since label are now 2 clases
-        #print(dataset[6].shape[0])
-        #print(sample)
-        sample_indices = np.random.choice(dataset[6].shape[0], sample)
-        #print(sample_indices)
+        sample_indices = np.random.choice(dataset[5].shape[0], sample)
         sample_data = [data[sample_indices]  for data in dataset]
-        a_s, a_e = self.answer(session,sample_data)
-        s_e_labels = sample_data[6]
+        s_e_preds = self.answer(session,sample_data)
+        s_e_labels = sample_data[5]
         preds=[]
         labels=[]
         for i in range(sample):
-            preds_temp= [0 if indx <a_s[i] or indx > a_e[i] else 1 for indx in range(sample_data[3][i])]
+            preds_temp= [0 if indx <s_e_preds[i][0] or indx > s_e_preds[i][1] else 1 for indx in range(sample_data[3][i])]
             labels_temp= [0 if indx <s_e_labels[i][0] or indx > s_e_labels[i][1] else 1 for indx in range(sample_data[3][i])]
             preds.extend(preds_temp)
             labels.extend(labels_temp)		
@@ -455,50 +443,17 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
             if i% 10 ==0:
                 f1, em = self.evaluate_answer(session, dataset)
                 print("F1 score: {} EM: {}".format(f1,em))
-                print(train_dir)
-                self.saver.save(session,train_dir+'/qa',global_step=i)
+
+                self.saver.save(session,train_dir+'/qa',global_step=self.global_step)
             
         
 
 
 
 if __name__ == "__main__":
-    ## Test
-    # Toy data
-    batch_size = 2
-    question_max_len=5
-    context_max_len = 10
-    input_size = 3
-    state_size = 4
-    output_size = 7 #size of state vector in decoder
-    question = np.arange(batch_size*question_max_len*input_size,dtype=np.float32)
-    question = question.reshape((question_max_len,batch_size,input_size))
-    context = np.arange(batch_size*context_max_len*input_size,dtype=np.float32)
-    context = context.reshape((context_max_len,batch_size,input_size))  
-    question_mask = np.array([question_max_len]*batch_size,dtype=np.int32)
-    context_mask = np.array([context_max_len]*batch_size,dtype=np.int32)
-    # Placeholder
-    q_placeholder = tf.placeholder(tf.float32, shape=(question_max_len,batch_size,input_size))
-    c_placeholder = tf.placeholder(tf.float32, shape=(context_max_len,batch_size,input_size))
-    q_seq_len_placeholder = tf.placeholder(tf.int32, shape=(batch_size))
-    c_seq_len_placeholder = tf.placeholder(tf.int32, shape=(batch_size))
-    # Initialize encoder
-    encoder = Encoder(state_size,input_size)
-    # Encode question
-    q_outputs, q_state= encoder.encode(q_placeholder,q_mask_placeholder)
-    q_outputs = tf.concat(2,q_outputs)
-    q_rep = tf.concat(1,[q_state[0].h, q_state[1].h])
-    # Encode context
-    c_outputs, c_state=encoder.encode(c_placeholder,c_seq_len_placeholder,q_outputs)
-    c_rep = tf.concat(2,c_outputs)
-    # Attention over knowledge
-    print(q_rep)
-    print(c_rep)
-    context_align = compute_alignment(tf.concat(0,[q_rep,q_rep]), c_rep)
-    context_attention = tf.reduce_sum(tf.multiply(context_align,c_rep),0) #[batch_size,state_size*2*2]###problem
-    knowledge = tf.multiply(context_attention,c_rep)
-    # Decode context
-    decoder = Decoder(output_size)
-    preds, logits = decoder.decode(knowledge)
-
+    question_max_len = 40
+    context_max_len = 600
+    encoder = Encoder(size=200, vocab_dim=100)
+    decoder = Decoder(output_size=750)
+    qa = QASystem(encoder, decoder,question_max_len,context_max_len,"C:/Users/Client/Desktop/NLPwithDeepLearning/assignment4/data/squad/glove.trimmed.100.npz",0.01,10,0.15,"adam")
 

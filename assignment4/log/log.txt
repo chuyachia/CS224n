@@ -42,3 +42,48 @@ Num params: 19556602
 Number of params: 19556602 (retreival took 16.926030 secs)
 Reading model parameters from /Users/Client/AppData/Local/Temp/cs224n-squad-train/qa-1
 Number of params: 19556602 (retreival took 17.211917 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 18.305242 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 44.225703 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 45.128681 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 45.834281 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 48.267761 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 44.915880 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 40.098942 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 45.153330 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 42.984271 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 39.624070 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 42.416475 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 41.293272 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 14.523626 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 35.209262 secs)
+Created model with fresh parameters.
+Num params: 19556602
+Number of params: 19556602 (retreival took 23.968144 secs)
