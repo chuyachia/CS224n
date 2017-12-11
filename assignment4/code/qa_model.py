@@ -24,16 +24,6 @@ def get_optimizer(opt):
         assert (False)
     return optfn
 
-def compute_alignment(input_hidden_state, attention_hidden_states):# attention_hidden_states: max_time* batch_size*_state_size, input_hidden_state:batch_size*_state_size
-    _max_time,_,_state_size = attention_hidden_states.get_shape().as_list()
-    attention_hidden_states = tf.reshape(attention_hidden_states,[_max_time,-1])
-    input_hidden_state= tf.reshape(input_hidden_state,[-1])
-    logits = tf.reshape(tf.multiply(input_hidden_state,attention_hidden_states),[_max_time,-1,_state_size])
-    logits = tf.reduce_sum(logits,2)
-    alignment = tf.nn.softmax(logits) 
-    alignment = tf.reshape(alignment,[_max_time,-1,1])
-    return alignment
-
 def get_minibatch_data(data,minibatch_size, shuffle=True):
     list_data = type(data) is list and (type(data[0]) is list or type(data[0]) is np.ndarray)
     data_size = len(data[0]) if list_data else len(data)
@@ -49,66 +39,143 @@ def minibatch(data,indices):
     
     
 
-class LSTMCell(tf.nn.rnn_cell.RNNCell):
-    def __init__(self,input_size,state_size,condition_state=None):# input_size:dimensions the embedding of each input
-        self.input_size = input_size
+class Match_LSTMCell(tf.nn.rnn_cell.RNNCell):
+    def __init__(self,state_size,question_outputs):
         self._state_size = state_size
-        self.condition_state= condition_state
+        self.question_outputs= question_outputs
+    @property
+    def state_size(self):		
+        return tf.nn.rnn_cell.LSTMStateTuple(self._state_size, self._state_size) 
+    @property
+    def output_size(self):
+        return self._state_size
+		
+    def __call__(self, inputs, state, scope=None): #inputs = context output at time t
+        scope = scope or type(self).__name__ # scope can be passed here through calling tf.dynamic_rnn
+        with tf.variable_scope(scope):
+            cell, hidden_state = state
+            # alignment
+            _,max_time,_ = self.question_outputs.get_shape().as_list()
+            # reshape question_outputs
+
+            W_q = tf.get_variable(name="W_q", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            W_p = tf.get_variable(name="W_p", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            W_r = tf.get_variable(name="W_r", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            b_p = tf.get_variable(name="b_p", shape = [1,self._state_size],initializer=tf.constant_initializer(0.),dtype=tf.float32)
+            e_Q =  tf.constant(1.0, shape=[max_time,1])
+            question_output= tf.reshape(self.question_outputs,(-1,self._state_size))
+            question_rep= tf.matmul(question_output,W_q)
+            question_rep = tf.reshape(question_rep,(-1,max_time,self._state_size)) #batch_size* max_len *state
+            #print(question_rep)
+            context_rep = tf.matmul(inputs,W_p) #b*state
+            hidden_rep = tf.matmul(hidden_state,W_r) #b*state
+            #print(context_rep)
+            #print(hidden_rep)
+            context_hidden_rep = tf.reshape(context_rep+hidden_rep+b_p,(-1,1))
+            context_hidden_rep = tf.reshape(tf.matmul(context_hidden_rep,tf.transpose(e_Q)),(-1,self._state_size,max_time))
+            context_hidden_rep = tf.transpose(context_hidden_rep,perm=[0,2,1])
+            #print(context_hidden_rep)
+            G_t = tf.tanh(question_rep+context_hidden_rep)
+            G_t = tf.reshape(G_t,(-1,self._state_size))
+            w = tf.get_variable(name="w", shape = [self._state_size,1],dtype=tf.float32)
+            b = tf.get_variable(name="b", shape = [],dtype=tf.float32)
+            attention_rep = tf.matmul(G_t,w) #b max_len,1
+            #print(attention_rep)
+            attention_rep = tf.reshape(attention_rep,(-1,max_time,1))
+            alignment_t = tf.nn.softmax(attention_rep+tf.multiply(e_Q,b)) #batch_size*max_len*1
+            weighted_question = tf.matmul(tf.transpose(self.question_outputs, perm=[0, 2, 1]),alignment_t) #batch_size*state*1
+            matched_input= tf.concat(1,[hidden_state,tf.squeeze(weighted_question)])#batch_size*2input_size
+            # input gate
+            W_i = tf.get_variable(name="W_i", shape = [self._state_size*2,self._state_size],dtype=tf.float32)
+            U_i = tf.get_variable(name="U_i", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            b_i = tf.get_variable(name="b_i", shape = [1,self._state_size],dtype=tf.float32)
+            # forget gate
+            W_f = tf.get_variable(name="W_f", shape = [self._state_size*2,self._state_size],dtype=tf.float32)
+            U_f = tf.get_variable(name="U_f", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            b_f = tf.get_variable(name="b_f", shape = [1,self._state_size],dtype=tf.float32)	
+            # output gate
+            W_o = tf.get_variable(name="W_o", shape = [self._state_size*2,self._state_size],dtype=tf.float32)
+            U_o = tf.get_variable(name="U_o", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            b_o = tf.get_variable(name="b_o", shape = [1,self._state_size],dtype=tf.float32)
+            # new memory cell
+            W_c = tf.get_variable(name="W_c", shape = [self._state_size*2,self._state_size],dtype=tf.float32)
+            U_c = tf.get_variable(name="U_c", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            b_c = tf.get_variable(name="b_c", shape = [1,self._state_size],dtype=tf.float32)
+            i_t =  tf.sigmoid(tf.matmul(matched_input,W_i)+tf.matmul(hidden_state,U_i)+b_i)
+            f_t =  tf.sigmoid(tf.matmul(matched_input,W_f)+tf.matmul(hidden_state,U_f)+b_f)
+            o_t =  tf.sigmoid(tf.matmul(matched_input,W_o)+tf.matmul(hidden_state,U_o)+b_o)
+            c_hat_t = tf.tanh(tf.matmul(matched_input,W_c)+tf.matmul(hidden_state,U_c)+b_c)
+            c_t = tf.multiply(f_t,cell)+tf.multiply(i_t,c_hat_t)
+            h_t = tf.multiply(o_t,tf.tanh(c_t))
+            new_state = tf.nn.rnn_cell.LSTMStateTuple(c_t, h_t)
+        return h_t, new_state
+class decode_LSTMCell(tf.nn.rnn_cell.RNNCell):
+    def __init__(self,state_size,knowledge_outputs):# batch_size*max_time*2state_size
+        self._state_size = state_size
+        self.knowledge_outputs= knowledge_outputs
     @property
     def state_size(self):		
         return tf.nn.rnn_cell.LSTMStateTuple(self._state_size, self._state_size) #because state is tuple
     @property
     def output_size(self):
-        return self._state_size
-		
-    def __call__(self, inputs, state, scope=None): #input : batch_size*input_size, state : batch_size*_state_size, condition_state:max_time* batch_size*_state_size -> is the output of question encoding (tf.nn.dynamic_rnn)
-        # tf.nn.dynamic_rnn return outputs [ max_time, batch_size, cell.output_size], state[batch_size, cell.state_size]
+        return self._state_size		
+    def __call__(self, state, scope=None): 
         scope = scope or type(self).__name__ # scope can be passed here through calling tf.dynamic_rnn
         with tf.variable_scope(scope):
-            cell, hidden_state = state
+            cell,hidden_state = state
+            # alignment
+            _,max_time,_ = self.knowledge_outputs.get_shape().as_list()
+            V = tf.get_variable(name="V", shape = [self._state_size*2,self._state_size],dtype=tf.float32)
+            W_a = tf.get_variable(name="W_a", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            b_a = tf.get_variable(name="b_a", shape = [1,self._state_size],dtype=tf.float32)
+            e_P =  tf.constant(1.0, shape=[max_time,1])
+            knowledge_outputs = tf.reshape(self.knowledge_outputs,(-1,self._state_size*2))
+            knowledge_rep= tf.matmul(knowledge_outputs,V)
+            knowledge_rep = tf.reshape(knowledge_rep,(-1,max_time,self._state_size))#batch*max_len*state
+            hidden_rep = tf.matmul(hidden_state,W_a)+b_a #batch*state
+            hidden_rep = tf.reshape(tf.matmul(tf.reshape(hidden_rep,(-1,1)),tf.transpose(e_P)),(-1,self._state_size,max_time))
+            hidden_rep = tf.transpose(hidden_rep,perm=[0,2,1])
+            F_t = tf.tanh(knowledge_rep+hidden_rep)
+            F_t = tf.reshape(F_t,(-1,self._state_size))
+            v = tf.get_variable(name="v", shape = [self._state_size,1],dtype=tf.float32)
+            c = tf.get_variable(name="c", shape = [],dtype=tf.float32)
+            attention_rep = tf.matmul(F_t,v) #b max_len,1
+            attention_rep = tf.reshape(attention_rep,(-1,max_time,1))
+            prob_t = attention_rep+tf.multiply(e_P,c)
+            logit_t = tf.nn.softmax(prob_t)#batch_size*max_len*1
+            #knowledge_outpts = 
+            weighted_input = tf.squeeze(tf.matmul(tf.transpose(self.knowledge_outputs, perm=[0, 2, 1]),logit_t)) #batch_size*2state*1 ->batch_size*2state
             # input gate
-            W_i = tf.get_variable(name="W_i", shape = [self.input_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-            U_i = tf.get_variable(name="U_i", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-            b_i = tf.get_variable(name="b_i", shape = [1,self._state_size],initializer=tf.constant_initializer(0.),dtype=tf.float32)
+            W_i = tf.get_variable(name="W_i", shape = [self._state_size*2,self._state_size],dtype=tf.float32)
+            U_i = tf.get_variable(name="U_i", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            b_i = tf.get_variable(name="b_i", shape = [1,self._state_size],dtype=tf.float32)
             # forget gate
-            W_f = tf.get_variable(name="W_f", shape = [self.input_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-            U_f = tf.get_variable(name="U_f", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-            b_f = tf.get_variable(name="b_f", shape = [1,self._state_size],initializer=tf.constant_initializer(0.),dtype=tf.float32)	
+            W_f = tf.get_variable(name="W_f", shape = [self._state_size*2,self._state_size],dtype=tf.float32)
+            U_f = tf.get_variable(name="U_f", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            b_f = tf.get_variable(name="b_f", shape = [1,self._state_size],dtype=tf.float32)	
             # output gate
-            W_o = tf.get_variable(name="W_o", shape = [self.input_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-            U_o = tf.get_variable(name="U_o", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-            b_o = tf.get_variable(name="b_o", shape = [1,self._state_size],initializer=tf.constant_initializer(0.),dtype=tf.float32)
+            W_o = tf.get_variable(name="W_o", shape = [self._state_size*2,self._state_size],dtype=tf.float32)
+            U_o = tf.get_variable(name="U_o", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            b_o = tf.get_variable(name="b_o", shape = [1,self._state_size],dtype=tf.float32)
             # new memory cell
-            W_c = tf.get_variable(name="W_c", shape = [self.input_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-            U_c = tf.get_variable(name="U_c", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-            b_c = tf.get_variable(name="b_c", shape = [1,self._state_size],initializer=tf.constant_initializer(0.),dtype=tf.float32)
-            if self.condition_state is not None:
-                V_i = tf.get_variable(name="V_i", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-                V_f = tf.get_variable(name="V_f", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-                V_o = tf.get_variable(name="V_o", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-                V_c = tf.get_variable(name="V_c", shape = [self._state_size,self._state_size],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-                alignment = compute_alignment(hidden_state,self.condition_state)
-                attention = tf.reduce_sum(tf.multiply(alignment,self.condition_state),0) # [batch_size,_state_size]
-                i_t =  tf.sigmoid(tf.matmul(inputs,W_i)+tf.matmul(hidden_state,U_i)+tf.matmul(attention,V_i)+b_i)
-                f_t =  tf.sigmoid(tf.matmul(inputs,W_f)+tf.matmul(hidden_state,U_f)+tf.matmul(attention,V_f)+b_f)
-                o_t =  tf.sigmoid(tf.matmul(inputs,W_o)+tf.matmul(hidden_state,U_o)+tf.matmul(attention,V_o)+b_o)
-                c_hat_t = tf.tanh(tf.matmul(inputs,W_c)+tf.matmul(hidden_state,U_c)+tf.matmul(attention,V_c)+b_c)
-            else:
-                i_t =  tf.sigmoid(tf.matmul(inputs,W_i)+tf.matmul(hidden_state,U_i)+b_i)
-                f_t =  tf.sigmoid(tf.matmul(inputs,W_f)+tf.matmul(hidden_state,U_f)+b_f)
-                o_t =  tf.sigmoid(tf.matmul(inputs,W_o)+tf.matmul(hidden_state,U_o)+b_o)
-                c_hat_t = tf.tanh(tf.matmul(inputs,W_c)+tf.matmul(hidden_state,U_c)+b_c)
+            W_c = tf.get_variable(name="W_c", shape = [self._state_size*2,self._state_size],dtype=tf.float32)
+            U_c = tf.get_variable(name="U_c", shape = [self._state_size,self._state_size],dtype=tf.float32)
+            b_c = tf.get_variable(name="b_c", shape = [1,self._state_size],dtype=tf.float32)
+            i_t =  tf.sigmoid(tf.matmul(weighted_input,W_i)+tf.matmul(hidden_state,U_i)+b_i)
+            f_t =  tf.sigmoid(tf.matmul(weighted_input,W_f)+tf.matmul(hidden_state,U_f)+b_f)
+            o_t =  tf.sigmoid(tf.matmul(weighted_input,W_o)+tf.matmul(hidden_state,U_o)+b_o)
+            c_hat_t = tf.tanh(tf.matmul(weighted_input,W_c)+tf.matmul(hidden_state,U_c)+b_c)
             c_t = tf.multiply(f_t,cell)+tf.multiply(i_t,c_hat_t)
             h_t = tf.multiply(o_t,tf.tanh(c_t))
             new_state = tf.nn.rnn_cell.LSTMStateTuple(c_t, h_t)
-        return h_t, new_state		
-
+        return h_t, new_state, tf.squeeze(prob_t)		
+## here too
 class Encoder(object):
-    def __init__(self, size, vocab_dim):
-        self.size = size #state_size
+    def __init__(self, state_size, vocab_dim):
+        self.size = state_size #state_size
         self.vocab_dim = vocab_dim #embedding size
                            
-    def encode(self, inputs, masks, encoder_state_input=None):
+    def encode(self, inputs, masks,scope,match_lstm=False,question_outputs=None):
         """
         In a generalized encode function, you pass in your inputs,
         masks, and an initial
@@ -123,23 +190,21 @@ class Encoder(object):
                  It can be context-level representation, word-level representation,
                  or both.
         """
-        if encoder_state_input is not None:
-            cell_fw = LSTMCell(self.vocab_dim, self.size*2,encoder_state_input)
-            cell_bw = LSTMCell(self.vocab_dim, self.size*2,encoder_state_input)
-            
-            outputs, state = tf.nn.bidirectional_dynamic_rnn(cell_fw,cell_bw,inputs,sequence_length= masks,dtype=tf.float32,time_major=True,scope='context')
+        if match_lstm:
+            assert question_outputs is not None, "Question outputs should be provided"
+            cell_fw=Match_LSTMCell(self.size,question_outputs)
+            cell_bw=Match_LSTMCell(self.size,question_outputs)
+            outputs, state = tf.nn.bidirectional_dynamic_rnn(cell_fw,cell_bw,inputs,sequence_length= masks,dtype=tf.float32,scope=scope)            
         else:
-            cell_fw = LSTMCell(self.vocab_dim, self.size)
-            cell_bw = LSTMCell(self.vocab_dim, self.size)
-            
-            outputs, state = tf.nn.bidirectional_dynamic_rnn(cell_fw,cell_bw,inputs,sequence_length= masks,dtype=tf.float32,time_major=True,scope='question')
+            cell=tf.nn.rnn_cell.BasicLSTMCell(self.size, state_is_tuple=True)    
+            outputs, state = tf.nn.dynamic_rnn(cell,inputs,sequence_length= masks,dtype=tf.float32,scope=scope)
         return outputs, state
 
 class Decoder(object):
-    def __init__(self, output_size):
-        self.output_size = output_size
+    def __init__(self, state_size):
+        self.size = state_size
 
-    def decode(self, knowledge_rep): #knowledge_rep :context_max_time* batch_size*context_state_size
+    def decode(self, knowledge_rep): #batch_size*max_contex_length*2*state_size
         """
         takes in a knowledge representation
         and output a probability estimation over
@@ -152,16 +217,22 @@ class Decoder(object):
         :return:
         """
         #Run a final LSTM that does a 2-class classification of these vectors as O or ANSWER
-        _max_time,_batch_size,_input_size = knowledge_rep.get_shape().as_list()
-        cell = LSTMCell(_input_size,self.output_size)
-        outputs, state = tf.nn.dynamic_rnn(cell,knowledge_rep,dtype=tf.float32,time_major=True,scope='knowledge') #outputs: context_max_time* batch_size*output_size
-        W_d = tf.get_variable(name="W_d", shape = [self.output_size,2],initializer= tf.contrib.layers.xavier_initializer(),dtype=tf.float32)
-        b_d = tf.get_variable(name="b_d", shape = [1,2],initializer=tf.constant_initializer(0.),dtype=tf.float32)
-        logits = tf.map_fn(lambda x: tf.matmul(x, W_d) + b_d , outputs) #context_max_time*batch_size*2
+        h_t = tf.zeros(shape=[tf.shape(knowledge_rep)[0],self.size])
+        c_t = tf.zeros(shape=[tf.shape(knowledge_rep)[0],self.size])
+        state = tf.nn.rnn_cell.LSTMStateTuple(c_t, h_t)
+        cell = decode_LSTMCell(self.size,knowledge_rep)
+        prob = []
+        with tf.variable_scope("decode"):
+            for time_step in range(2):
+                if time_step >0:
+                    tf.get_variable_scope().reuse_variables()
+                h_t, state, p_t = cell(state) #p_t = batch_size*max_len
+                prob.append(p_t)
+        logits = tf.stack((prob[0],prob[1]))#2*batch*max_len(classes)
         return logits
 
 class QASystem(object): ##maybe we don't need to pass question_max_len and context_max_len and can just leave them as none
-    def __init__(self, encoder, decoder,question_max_len,context_max_len,embed_path,learning_rate,batch_size,dropout_rate,optimizer): #, **kwargs 
+    def __init__(self, encoder, decoder,question_max_len,context_max_len,embed_path,starter_rate,batch_size,dropout_rate,optimizer_opt,max_grad_norm): #, **kwargs 
         """
         Initializes your System
 
@@ -182,23 +253,30 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         self.context_max_len = context_max_len
 
 
-        self.q_placeholder = tf.placeholder(tf.int32, shape=(self.question_max_len,None))#self.question_max_len
-        self.c_placeholder = tf.placeholder(tf.int32, shape=(self.context_max_len,None))#self.context_max_len
-        self.span_id_placeholder = tf.placeholder(tf.int32, shape=(None,2)) #batch*2
+        self.q_placeholder = tf.placeholder(tf.int32, shape=(None,self.question_max_len))
+        self.c_placeholder = tf.placeholder(tf.int32, shape=(None,self.context_max_len))
+        self.span_id_placeholder = tf.placeholder(tf.int32, shape=(None,2))
         self.q_seq_len_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.c_seq_len_placeholder = tf.placeholder(tf.int32, shape=(None))
-        self.c_mask_placeholder = tf.placeholder(tf.bool, shape=(self.context_max_len,None))#self.context_max_len
-        self.dropout_placeholder = tf.placeholder(tf.float32,())
+        self.c_mask_placeholder = tf.placeholder(tf.bool, shape=(None,self.context_max_len))
+        self.keep_rate_placeholder = tf.placeholder(tf.float32,())
 
         # ==== assemble pieces ====
-        with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
+        with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):#
             self.embed_matrix = self.setup_embeddings(embed_path)
             self.logits = self.setup_system()
             self.loss = self.setup_loss()
-
+        ### Seems OK up to here
+            
         # ==== set up training/updating procedure ====
-        optimizer= get_optimizer(optimizer)
-        self.train_op = optimizer(learning_rate).minimize(self.loss,global_step=self.global_step)
+        learning_rate = tf.train.exponential_decay(starter_rate, self.global_step,100000, 0.96, staircase=True)
+        optimize= get_optimizer(optimizer_opt)
+        optimizer = optimize(learning_rate)
+        gradients = optimizer.compute_gradients(self.loss)
+        [grad, var] = zip(*gradients)
+        grad,_ = tf.clip_by_global_norm(grad,max_grad_norm)
+        gradients = zip(grad, var)
+        self.train_op = optimizer.apply_gradients(gradients,global_step=self.global_step)
         self.saver =  tf.train.Saver() # create saver after the graph is built
 
         #pass
@@ -212,26 +290,22 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         :return: 
         """
 		
-        # Featurize input_placeholder
+        ## Featurize input_placeholder
         q_featurized = tf.nn.embedding_lookup(self.embed_matrix,self.q_placeholder)
         c_featurized = tf.nn.embedding_lookup(self.embed_matrix,self.c_placeholder)
-        # Encode question
-        q_outputs, q_state= self.encoder.encode(q_featurized,self.q_seq_len_placeholder)
-        q_outputs = tf.concat(2,q_outputs) # concat first before applying dropout
-        ## Add dropout to output
-        q_outputs = tf.nn.dropout(q_outputs,keep_prob=self.dropout_placeholder)
-        q_rep = tf.concat(1,[q_state[0].h, q_state[1].h])
-        # Encode context
-        c_outputs, c_state=self.encoder.encode(c_featurized,self.c_seq_len_placeholder,q_outputs)
-        c_outputs = tf.concat(2,c_outputs)
-        ## Add dropout to output
-        c_outputs = tf.nn.dropout(c_outputs,keep_prob=self.dropout_placeholder)
-        # Attention over context reppresentation
-        context_align = compute_alignment(tf.concat(1,[q_rep,q_rep]), c_outputs)
-        context_attention = tf.reduce_sum(tf.multiply(context_align,c_outputs),0) #[batch_size,state_size*2*2]
-        knowledge = tf.multiply(context_attention,c_outputs)
-        # Decode context
-        logits = self.decoder.decode(knowledge)
+        ## Encode question
+        q_outputs, q_state= self.encoder.encode(q_featurized,self.q_seq_len_placeholder,scope='question')
+        # Add dropout to output
+        q_outputs = tf.nn.dropout(q_outputs,keep_prob=self.keep_rate_placeholder) 
+        ## Encode context
+        c_outputs, c_state=self.encoder.encode(c_featurized,self.c_seq_len_placeholder,scope='context')
+        # Add dropout to output
+        c_outputs = tf.nn.dropout(c_outputs,keep_prob=self.keep_rate_placeholder)
+        ## Attention over context
+        k_outputs, k_state = self.encoder.encode(c_outputs,self.c_seq_len_placeholder,scope='attention',match_lstm=True,question_outputs=q_outputs)
+        k_outputs = tf.concat(2,k_outputs) #batch_size*max_contex_length*2*state_size
+        ## Decode
+        logits = self.decoder.decode(k_outputs)
         return logits
         #raise NotImplementedError("Connect all parts of your system here!")
 
@@ -242,7 +316,7 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         :return:
         """
         with vs.variable_scope("loss"):
-            loss_temp = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=tf.transpose(self.logits), labels=tf.transpose(self.span_id_placeholder))
+            loss_temp = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.logits, labels=tf.transpose(self.span_id_placeholder))
             loss = tf.reduce_mean(loss_temp)
         return loss
 
@@ -253,7 +327,7 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         """
         with np.load(path) as data:     
             with vs.variable_scope("embeddings"):
-                embed_matrix = tf.Variable(data['glove'],dtype=tf.float32)
+                embed_matrix = tf.Variable(data['glove'],dtype=tf.float32,trainable=False)
         return embed_matrix
 
     def optimize(self, session, train): #train_x, train_y
@@ -262,14 +336,14 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         This method is equivalent to a step() function
         :return:
         """
+
         input_feed = {
-            self.q_placeholder:np.transpose(train[0]),
+            self.q_placeholder:train[0],
             self.q_seq_len_placeholder:train[1],
-            self.c_placeholder:np.transpose(train[2]),
+            self.c_placeholder:train[2],
             self.c_seq_len_placeholder:train[3],
-            self.c_mask_placeholder:np.transpose(train[4]),
-            self.span_id_placeholder:(train[5]),
-            self.dropout_placeholder:self.dropout_rate
+            self.span_id_placeholder:train[4],
+            self.keep_rate_placeholder:1.0-self.dropout_rate,
         }
 
 
@@ -286,13 +360,12 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         :return:
         """
         input_feed = {
-            self.q_placeholder:np.transpose(valid[0]),
+            self.q_placeholder:valid[0],
             self.q_seq_len_placeholder:valid[1],
-            self.c_placeholder:np.transpose(valid[2]),
+            self.c_placeholder:valid[2],
             self.c_seq_len_placeholder:valid[3],
-            self.c_mask_placeholder:np.transpose(valid[4]),
-            self.span_id_placeholder:(valid[5]),
-            self.dropout_placeholder:1.0
+            self.span_id_placeholder:valid[4],
+            self.keep_rate_placeholder:1.0
         }
 
 
@@ -310,12 +383,11 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         :return:
         """
         input_feed = {
-            self.q_placeholder:np.transpose(test[0]),
+            self.q_placeholder:test[0],
             self.q_seq_len_placeholder:test[1],
-            self.c_placeholder:np.transpose(test[2]),
+            self.c_placeholder:test[2],
             self.c_seq_len_placeholder:test[3],
-            self.c_mask_placeholder:np.transpose(test[4]),
-            self.dropout_placeholder:1.0
+            self.keep_rate_placeholder:1.0
         }
 
         output_feed = self.logits
@@ -325,8 +397,9 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         return outputs
 
     def answer(self, session, test_x):
-        logits = self.decode(session, test_x) #max_len*batch*2
-        span_id = np.argmax(logits,0)# batch*2
+        logits = self.decode(session, test_x) #2*batch*max_len(classes)
+        print(logits)
+        span_id = np.argmax(logits,-1)# 2*batch
         return span_id
 
     def validate(self, sess, valid_dataset):
@@ -349,7 +422,7 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
 
         return valid_cost
 
-    def evaluate_answer(self, session, dataset, sample=100, log=False):
+    def evaluate_answer(self, session, dataset, sample=100,use_sample=True, log=False):
         """
         Evaluate the model's performance using the harmonic mean of F1 and Exact Match (EM)
         with the set of true answer labels
@@ -364,13 +437,18 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         :param log: whether we print to std out stream
         :return:
         """
-        sample_indices = np.random.choice(dataset[5].shape[0], sample)
-        sample_data = [data[sample_indices]  for data in dataset]
-        s_e_preds = self.answer(session,sample_data)
-        s_e_labels = sample_data[5]
+        if use_sample:
+            sample_indices = np.random.choice(dataset[4].shape[0], sample)
+            sample_data = [data[sample_indices]  for data in dataset]
+        else:
+            sample_data = dataset
+        s_e_preds = np.transpose(self.answer(session,sample_data))
+        print(s_e_preds)
+        s_e_labels = sample_data[4]
+        print(s_e_labels)
         preds=[]
         labels=[]
-        for i in range(sample):
+        for i in range(sample_data[0].shape[0]):
             preds_temp= [0 if indx <s_e_preds[i][0] or indx > s_e_preds[i][1] else 1 for indx in range(sample_data[3][i])]
             labels_temp= [0 if indx <s_e_labels[i][0] or indx > s_e_labels[i][1] else 1 for indx in range(sample_data[3][i])]
             preds.extend(preds_temp)
@@ -402,7 +480,7 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         return f1, em
 
 
-    def train(self, session, dataset, train_dir): #
+    def train(self, session, dataset, train_dir, small_data_test=False): #
         """
         Implement main training loop
 
@@ -431,20 +509,33 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
         # you will also want to save your model parameters in train_dir
         # so that you can use your trained model to make predictions, or
         # even continue training
-        tic = time.time()
-        params = tf.trainable_variables()
-        num_params = sum([np.prod(tf.shape(t.value()).eval()) for t in params])
-        toc = time.time()
-        logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
+        if small_data_test:
+            for i in range(1000):
+                _, loss = self.optimize(session, dataset)
+                print("Training cross-entroy loss: {}".format(loss))
+                if i>0 and i%10==0:
+                    f1, em = self.evaluate_answer(session, dataset,use_sample=False)
+                    print("F1 score: {} EM: {}".format(f1,em))
+                
+        else:
+            tic = time.time()
+            params = tf.trainable_variables()
+            num_params = sum([np.prod(tf.shape(t.value()).eval()) for t in params])
+            toc = time.time()
+            logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
+            mean_loss=[]
+            for i, data in enumerate(get_minibatch_data(dataset,self.batch_size)):
+                _, loss = self.optimize(session, data)
+                mean_loss.append(loss)
+                #print("Training cross-entroy loss: {}".format(loss))
+                if i%20==0:
+                    print("Training cross-entroy loss: {}".format(sum(mean_loss)/len(mean_loss)))
+                    mean_loss=[]
+                if i>0 and i% 100 ==0:
+                    f1, em = self.evaluate_answer(session, dataset)
+                    print("F1 score: {} EM: {}".format(f1,em))
 
-        for i, data in enumerate(get_minibatch_data(dataset,self.batch_size)):
-            _, loss = self.optimize(session, data)
-            print("Training cross-entroy loss: {}".format(loss))
-            if i% 10 ==0:
-                f1, em = self.evaluate_answer(session, dataset)
-                print("F1 score: {} EM: {}".format(f1,em))
-
-                self.saver.save(session,train_dir+'/qa',global_step=self.global_step)
+                    self.saver.save(session,train_dir+'/qa',global_step=self.global_step)
             
         
 
@@ -453,7 +544,8 @@ class QASystem(object): ##maybe we don't need to pass question_max_len and conte
 if __name__ == "__main__":
     question_max_len = 40
     context_max_len = 600
-    encoder = Encoder(size=200, vocab_dim=100)
-    decoder = Decoder(output_size=750)
-    qa = QASystem(encoder, decoder,question_max_len,context_max_len,"C:/Users/Client/Desktop/NLPwithDeepLearning/assignment4/data/squad/glove.trimmed.100.npz",0.01,10,0.15,"adam")
+    state_size=200
+    encoder = Encoder(state_size=state_size, vocab_dim=100)
+    decoder = Decoder(state_size=750)
+    qa = QASystem(encoder, decoder,question_max_len,context_max_len,"C:/Users/Client/Desktop/NLPwithDeepLearning/assignment4/data/squad/glove.trimmed.100.npz",0.01,10,0.15,"adam",10)
 

@@ -1,7 +1,3 @@
-
-
-
-
 import os
 import json
 
@@ -107,31 +103,21 @@ def get_answer_span(data_path,context_max_len):
         raise ValueError("Data file %s not found.", data_path)
     
 
-
 def main(_):
-    # Do what you need to load datasets from FLAGS.data_dir
     dataset = {}
     question_max_len = 40
     context_max_len = 600
-    # Preprocess and collect train data
-    train_q_path = pjoin(FLAGS.data_dir, "train.ids.question")
-    train_q_data, train_q_seq_len = pad_sentences(train_q_path,question_max_len)
-    assert not any(train_q_seq_len>train_q_data.shape[1]), 'Some questions have length greater than max question length'
-    train_c_path = pjoin(FLAGS.data_dir, "train.ids.context")
-    train_c_data, train_c_seq_len = pad_sentences(train_c_path,context_max_len)
-    assert not any(train_c_seq_len>train_c_data.shape[1]), 'Some contexts have length greater than max context length'
-    train_s_path = pjoin(FLAGS.data_dir, "train.span")
-    train_s_e_id = get_answer_span(train_s_path,context_max_len)
-    dataset['train'] =[train_q_data,train_q_seq_len,train_c_data,train_c_seq_len,train_s_e_id]
-    # Preprocess and collect validation data
-    val_q_path = pjoin(FLAGS.data_dir, "val.ids.question")
-    val_q_data, val_q_seq_len = pad_sentences(val_q_path,question_max_len)
-    val_c_path = pjoin(FLAGS.data_dir, "val.ids.context")
-    val_c_data, val_c_seq_len = pad_sentences(val_c_path,context_max_len)
-    val_s_path = pjoin(FLAGS.data_dir, "val.span")
-    val_s_e_id = get_answer_span(val_s_path,context_max_len)
-    dataset['val'] = [val_q_data,val_q_seq_len,val_c_data,val_c_seq_len,val_s_e_id]
-    
+    # Preprocess and collect small test data
+    test_q_path = pjoin(FLAGS.data_dir, "test.ids.question")
+    test_q_data, test_q_seq_len = pad_sentences(test_q_path,question_max_len)
+    assert not any(test_q_seq_len>test_q_data.shape[1]), 'Some questions have length greater than max question length'
+    test_c_path = pjoin(FLAGS.data_dir, "test.ids.context")
+    test_c_data, test_c_seq_len = pad_sentences(test_c_path,context_max_len)
+    assert not any(test_c_seq_len>test_c_data.shape[1]), 'Some contexts have length greater than max context length'
+    test_s_path = pjoin(FLAGS.data_dir, "test.span")
+    test_s_e_id = get_answer_span(test_s_path,context_max_len)
+    dataset['test'] =[test_q_data,test_q_seq_len,test_c_data,test_c_seq_len,test_s_e_id]
+
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     vocab, rev_vocab = initialize_vocab(vocab_path)
@@ -156,10 +142,6 @@ def main(_):
 
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
 
-        for i in range(FLAGS.epochs):
-            qa.train(sess, dataset['train'], save_train_dir)#
-            print('Finish training epoch {}'.format(i))
-            qa.evaluate_answer(sess, dataset['val'])# vocab, FLAGS.evaluate
-
+        qa.train(sess, dataset['test'], save_train_dir,small_data_test=True)#
 if __name__ == "__main__":
     tf.app.run()
